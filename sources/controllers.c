@@ -17,22 +17,24 @@ static pi_struct controller_iq = {
 
 void control_runner(float *w_ref, float *wr, float *id, float *iq, float *ud,
                     float *uq) {
-  float id_ref;
-  float iq_ref;
+  float id_ref = 0.0f;
+  float iq_ref = 0.0f;
+  
 
   if (count == 0)
   {
     control_slow(w_ref, wr, &command_signal);
   }
+  
+  
   id_ref = 0;
-  iq_ref = command_signal - 1;
+  iq_ref = command_signal;
 
   count++;
   if (count > COUNT_MAX) {
     count = 0;
   }
   control_fast(&id_ref, &iq_ref, id, iq, ud, uq);
-  printf("Ud: %lf, Uq: %lf\n",*ud, *uq );
 }
 
 /* id iq controller runs way more */

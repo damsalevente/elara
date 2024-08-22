@@ -98,12 +98,13 @@ void step(float t, float next_t, float u[])
     ht = ht1;
     adaptrk4(t, &ht, &ht1, EPS, u, N, motor_eq);
     torque = get_torque(&u[ID], &u[IQ]);
+    u[TI] = torque;
     if(u[THETA] > 360)
     {
       u[THETA] -= 360;
     }
 
-    if(u[THETA] < -360)
+    if(u[THETA] < 0)
     {
       u[THETA] += 360;
     }
