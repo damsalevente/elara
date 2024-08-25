@@ -95,11 +95,11 @@ void step(float t, float next_t, float u[])
 		torque = get_torque(&u[ID], &u[IQ]);
 		u[TI] = torque;
 		if (u[THETA] > 360) {
-			u[THETA] -= 360;
+			u[THETA] = 0;
 		}
 
 		if (u[THETA] < 0) {
-			u[THETA] += 360;
+			u[THETA] = 360;
 		}
 		t += ht;
 	}

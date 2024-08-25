@@ -2,7 +2,7 @@
 
 #include <mach-o/dyld.h>
 #include <raylib.h>
-
+#include <raymath.h>
 #include "controllers.h"
 #include "motor.h"
 #include "pid.h"
@@ -16,7 +16,7 @@
 
 void DrawCar(int x, int y)
 {
-	DrawRectangle(x - 5, y - 50, 10, 10, BLACK);
+	DrawRectangle(x, y, 10, 10, BLACK);
 }
 
 int MotorSelect(int *motor_type)
@@ -60,7 +60,9 @@ int main(void)
 
 	int posX = screenWidth / 2;
 	int posY = screenHeight / 2;
-	Vector2 touchPosition = {0, 0};
+  float distance = 0;
+	Vector2 position_target = {posX, posY};
+	Vector2 position_current = {posX, posY};
 	int motor_selected = 0;
 	Vector2 center = {80, 80};
 	InitWindow(screenWidth, screenHeight, "raylib [core] example - basic window");
@@ -77,15 +79,23 @@ int main(void)
 		t = t + TS;
 
 		/* controller stuff */
-		w_ref = pos_control(desired_position, posX);
+    distance = Vector2Distance(position_current, position_target);
+    GuiTextBox((Rectangle){400, 400, 200, 20}, TextFormat("Distance: %lf", distance), 12, 0);
+		w_ref = pos_control(distance, 0); /* control distance  to be zero */
 		control_runner(&w_ref, &motor_state[WR], &motor_state[ID], &motor_state[IQ],
 			       &motor_state[VD], &motor_state[VQ]);
 
-		posX += GEARBOX * motor_state[WR];
-		if (posX > screenWidth) {
-			posX = screenWidth;
-		} else if (posX < 0) {
-			posX = 0;
+    position_current = Vector2MoveTowards(position_current, position_target, motor_state[WR]);
+    
+		if (position_current.x > screenWidth) {
+			position_current.x = screenWidth;
+		} else if (position_current.x < 0) {
+			position_current.x = 0;
+		}
+		if (position_current.y > screenHeight) {
+			position_current.y = screenHeight;
+		} else if (position_current.y < 0) {
+			position_current.y = 0;
 		}
 
 		BeginDrawing();
@@ -117,15 +127,15 @@ int main(void)
 			set_motor(motor_type);
 			motor_turn_on(motor_state);
 		}
-		DrawText(TextFormat("Speed:\t\t %d", (int)motor_state[WR]), 600, 250, 16, GRAY);
-		DrawText(TextFormat("D Current: %d", (int)motor_state[ID]), 600, 300, 16, GRAY);
-		DrawText(TextFormat("Q Current: %d", (int)motor_state[IQ]), 600, 350, 16, GRAY);
-		DrawCircleSector(center, 60, 0, 360, 40, GRAY);
-		DrawCircleSector(center, 60, motor_state[THETA], motor_state[THETA] + 10, 40, BLUE);
+		DrawText(TextFormat("Speed:\t\t %.2lf", motor_state[WR]), 600, 250, 16, GRAY);
+		DrawText(TextFormat("D Current: %.2lf", motor_state[ID]), 600, 300, 16, GRAY);
+		DrawText(TextFormat("Q Current: %l.2f", motor_state[IQ]), 600, 350, 16, GRAY);
+		//DrawCircleSector(center, 60, 0, 360, 40, GRAY);
+		//DrawCircleSector(center, 60, motor_state[THETA], motor_state[THETA] + 10, 40, BLUE);
 		if (IsGestureDetected(GESTURE_TAP) == TRUE) {
-			touchPosition = GetTouchPosition(0);
+			position_target = GetTouchPosition(0);
 		}
-		DrawCar(touchPosition.x, touchPosition.y);
+		DrawCar(position_current.x, position_current.y);
 
 		EndDrawing();
 		//----------------------------------------------------------------------------------

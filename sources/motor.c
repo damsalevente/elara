@@ -7,7 +7,7 @@ static const motor_params pmsms[] = {{
 					     .J = 5e-5,
 					     .P = 4,
 					     .B = 1,
-					     .lambda = 0.17,
+					     .lambda = 0.01,
 				     },
 				     {
 					     .R = 2.6,
