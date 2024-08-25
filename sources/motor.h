@@ -2,26 +2,24 @@
 #define MOTOR_H
 #define N 7 /* number of variables */
 
-typedef enum params
-{
-    ID = 0,
-    IQ,
-    WR,
-    VD,
-    VQ,
-    TI,
-    THETA,
-    ODE_COUNT
+typedef enum params {
+	ID = 0,
+	IQ,
+	WR,
+	VD,
+	VQ,
+	TI,
+	THETA,
+	ODE_COUNT
 } params;
-typedef struct motor_params
-{
-    float R;  /* resistance */
-    float Ld; /* inductance for d reference frame */
-    float Lq; /* inductance for q reference frame */
-    float J;  /* TODO: what is it */
-    float P;
-    float B;
-    float lambda;
+typedef struct motor_params {
+	float R;  /* resistance */
+	float Ld; /* inductance for d reference frame */
+	float Lq; /* inductance for q reference frame */
+	float J;  /* TODO: what is it */
+	float P;
+	float B;
+	float lambda;
 } motor_params;
 
 /* right hand side equation for 3 motor equations, id, iq, and wr */

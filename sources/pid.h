@@ -1,17 +1,16 @@
 
 #ifndef PID_H
 #define PID_H
-typedef struct pi_struct
-{
-    float K;
-    float I;
-    float D;
-    float res;
-    float err;
-    float lim_max;
-    float lim_min;
-    float buffer;
-    float prev_e;
+typedef struct pi_struct {
+	float K;
+	float I;
+	float D;
+	float res;
+	float err;
+	float lim_max;
+	float lim_min;
+	float buffer;
+	float prev_e;
 } pi_struct;
 
 /* no D rn */
