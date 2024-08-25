@@ -1,3 +1,6 @@
+
+#ifndef PID_H
+#define PID_H
 typedef struct pi_struct
 {
     float K;
@@ -14,3 +17,5 @@ typedef struct pi_struct
 /* no D rn */
 float pi(pi_struct *dev, float *target, float *currval);
 void change_params(pi_struct *dev, float k, float i, float d);
+
+#endif
