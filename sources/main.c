@@ -14,9 +14,15 @@
 #define GEARBOX ((float)20.0f)
 #define TS      1.0f /* motor simulation time */
 
-void DrawCar(int x, int y)
+void DrawCar(Texture2D *texture, int x, int y)
 {
-	DrawRectangle(x, y, 10, 10, BLACK);
+  
+  int carWidth = texture->width;
+  int carHeight = texture->height;
+  Rectangle sourceRect = {0.0f, 0.0f, (float)carWidth, (float)carHeight};
+  Rectangle destRect = {x - (float)carWidth/8, y - (float)carHeight/8, (float)carWidth/4, (float)carHeight/4};
+  Vector2 origin = {0, 0};
+  DrawTexturePro(*texture, sourceRect, destRect, origin, 0.0f, WHITE);
 }
 
 int MotorSelect(int *motor_type)
@@ -45,8 +51,8 @@ int main(void)
 {
 	// Initialization
 	//--------------------------------------------------------------------------------------
-	const int screenWidth = 800;
-	const int screenHeight = 450;
+	const int screenWidth = 1200;
+	const int screenHeight = 600;
 	/* motor parameters */
 	float t = 0.0; /* time */
 	int counter = 0;
@@ -66,9 +72,12 @@ int main(void)
 	int motor_selected = 0;
 	Vector2 center = {80, 80};
 	InitWindow(screenWidth, screenHeight, "raylib [core] example - basic window");
+  /* Load textures */  
+  Texture2D carTexture = LoadTexture("./docs/removed_glutter.jpeg");
+  
 	set_motor(motor_type);
 
-	SetTargetFPS(120); // Set our game to run at 60 frames-per-second
+	SetTargetFPS(50); // Set our game to run at 60 frames-per-second
 	//--------------------------------------------------------------------------------------
 
 	// Main game loop
@@ -80,7 +89,6 @@ int main(void)
 
 		/* controller stuff */
     distance = Vector2Distance(position_current, position_target);
-    GuiTextBox((Rectangle){400, 400, 200, 20}, TextFormat("Distance: %lf", distance), 12, 0);
 		w_ref = pos_control(distance, 0); /* control distance  to be zero */
 		control_runner(&w_ref, &motor_state[WR], &motor_state[ID], &motor_state[IQ],
 			       &motor_state[VD], &motor_state[VQ]);
@@ -100,7 +108,9 @@ int main(void)
 
 		BeginDrawing();
 		ClearBackground(RAYWHITE);
-
+    
+    
+    GuiTextBox((Rectangle){400, 400, 200, 20}, TextFormat("Distance: %lf", distance), 12, 0);
 		GuiSlider((Rectangle){600, 40, 120, 20}, "Reference position",
 			  TextFormat("%lf", desired_position), &desired_position, 0.0f,
 			  screenWidth);
@@ -135,12 +145,12 @@ int main(void)
 		if (IsGestureDetected(GESTURE_TAP) == TRUE) {
 			position_target = GetTouchPosition(0);
 		}
-		DrawCar(position_current.x, position_current.y);
+		DrawCar(&carTexture, position_current.x, position_current.y);
 
 		EndDrawing();
 		//----------------------------------------------------------------------------------
 	}
-
+  UnloadTexture(carTexture);
 	// De-Initialization
 	//--------------------------------------------------------------------------------------
 	CloseWindow(); // Close window and OpenGL context
