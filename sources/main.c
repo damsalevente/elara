@@ -7,7 +7,9 @@
 #include "motor.h"
 #include "pid.h"
 #define RAYGUI_IMPLEMENTATION
-#include <raygui.h>
+#define CLAY_IMPLEMENTATION
+#include "clay.h"
+#include "clay_renderer_raylib.c"
 
 #include "solver.h"
 
@@ -16,13 +18,33 @@
 
 void DrawCar(Texture2D *texture, int x, int y)
 {
-  
-  int carWidth = texture->width;
-  int carHeight = texture->height;
-  Rectangle sourceRect = {0.0f, 0.0f, (float)carWidth, (float)carHeight};
-  Rectangle destRect = {x - (float)carWidth/8, y - (float)carHeight/8, (float)carWidth/4, (float)carHeight/4};
-  Vector2 origin = {0, 0};
-  DrawTexturePro(*texture, sourceRect, destRect, origin, 0.0f, WHITE);
+	static uint8_t run_anim_counter = 0;
+	static int prev_x = 0;
+	static int prev_y = 0;
+	static bool isRunning = false;
+	int carWidth = texture->width;
+	int carHeight = texture->height;
+	Rectangle sourceRect = {0.0f, 0.0f, (float)carWidth, (float)carHeight};
+	Rectangle destRect = {x - (float)carWidth / 8, y - (float)carHeight / 8,
+			      (float)carWidth / 4, (float)carHeight / 4};
+	Vector2 origin = {0, 0};
+	// DrawTexturePro(*texture, sourceRect, destRect, origin, 0.0f, WHITE);
+
+	if (abs(x - prev_x) > 0.5 || abs(y - prev_y) > 0.5) {
+		if (run_anim_counter % 5 == 0) {
+			isRunning = !isRunning;
+		}
+		if (isRunning) {
+			GuiLabel((Rectangle){x - 10, y - 10, 10, 10}, "#150#");
+		} else {
+			GuiLabel((Rectangle){x - 10, y - 10, 10, 10}, "#149#");
+		}
+	} else {
+		GuiLabel((Rectangle){x - 10, y - 10, 10, 10}, "#149#");
+	}
+	prev_x = x;
+	prev_y = y;
+	run_anim_counter++;
 }
 
 int MotorSelect(int *motor_type)
@@ -47,6 +69,14 @@ int MotorSelect(int *motor_type)
 	return 0;
 }
 
+static inline Clay_Dimensions measureText(Clay_String *cs, Clay_TextElementConfig *tec)
+{
+	Clay_Dimensions dimensions = {0.0f, 0.0f};
+	dimensions.height = tec->lineHeight;
+	dimensions.width = cs->length * 15;
+	return dimensions;
+}
+
 int main(void)
 {
 	// Initialization
@@ -60,21 +90,30 @@ int main(void)
 	float motor_state[N] = {0.0}; /* buffer for output */
 	float w_ref = 0.0;
 	int motor_type = 0;
+	bool shoot_projectile = false; /* shoot projectile or now */
 	float desired_position = 0.0f;
 	/* should be a button */
 	motor_turn_on(motor_state);
 
 	int posX = screenWidth / 2;
 	int posY = screenHeight / 2;
-  float distance = 0;
+	float distance = 0;
 	Vector2 position_target = {posX, posY};
+	Vector2 projectile_current = {0};
+	Vector2 projectile_end = {0};
 	Vector2 position_current = {posX, posY};
 	int motor_selected = 0;
 	Vector2 center = {80, 80};
 	InitWindow(screenWidth, screenHeight, "raylib [core] example - basic window");
-  /* Load textures */  
-  Texture2D carTexture = LoadTexture("./docs/removed_glutter.jpeg");
-  
+	GuiLoadStyle("/Users/leventedamsa/Downloads/style_enefete.rgs");
+	/* Load textures */
+	Texture2D carTexture = LoadTexture("./docs/removed_glutter.jpeg");
+
+	/* setup clay */
+	// uint64_t totalMemorySize = Clay_MinMemorySize();
+	// Clay_Arena arena = Clay_CreateArenaWithCapacityAndMemory(totalMemorySize,
+	// malloc(totalMemorySize)); Clay_Initialize(arena,  (Clay_Dimensions){screenWidth,
+	// screenHeight}); Clay_SetMeasureTextFunction(measureText);
 	set_motor(motor_type);
 
 	SetTargetFPS(50); // Set our game to run at 60 frames-per-second
@@ -88,13 +127,14 @@ int main(void)
 		t = t + TS;
 
 		/* controller stuff */
-    distance = Vector2Distance(position_current, position_target);
+		distance = Vector2Distance(position_current, position_target);
 		w_ref = pos_control(distance, 0); /* control distance  to be zero */
 		control_runner(&w_ref, &motor_state[WR], &motor_state[ID], &motor_state[IQ],
 			       &motor_state[VD], &motor_state[VQ]);
 
-    position_current = Vector2MoveTowards(position_current, position_target, motor_state[WR]);
-    
+		position_current =
+			Vector2MoveTowards(position_current, position_target, motor_state[WR]);
+
 		if (position_current.x > screenWidth) {
 			position_current.x = screenWidth;
 		} else if (position_current.x < 0) {
@@ -106,11 +146,22 @@ int main(void)
 			position_current.y = 0;
 		}
 
+		if (shoot_projectile) {
+
+			projectile_current =
+				Vector2MoveTowards(projectile_current, projectile_end, 10);
+      GuiLabel((Rectangle){projectile_current.x-10, projectile_current.y, 200,10}, "rontas");
+      if((projectile_current.x == projectile_end.x) && (projectile_current.y == projectile_end.y))
+      {
+        shoot_projectile = false;
+      }
+		}
+
 		BeginDrawing();
-		ClearBackground(RAYWHITE);
-    
-    
-    GuiTextBox((Rectangle){400, 400, 200, 20}, TextFormat("Distance: %lf", distance), 12, 0);
+		ClearBackground(GetColor(GuiGetStyle(DEFAULT, BACKGROUND_COLOR)));
+
+		GuiTextBox((Rectangle){400, 400, 200, 20}, TextFormat("Distance: %lf", distance),
+			   12, 0);
 		GuiSlider((Rectangle){600, 40, 120, 20}, "Reference position",
 			  TextFormat("%lf", desired_position), &desired_position, 0.0f,
 			  screenWidth);
@@ -140,17 +191,25 @@ int main(void)
 		DrawText(TextFormat("Speed:\t\t %.2lf", motor_state[WR]), 600, 250, 16, GRAY);
 		DrawText(TextFormat("D Current: %.2lf", motor_state[ID]), 600, 300, 16, GRAY);
 		DrawText(TextFormat("Q Current: %l.2f", motor_state[IQ]), 600, 350, 16, GRAY);
-		//DrawCircleSector(center, 60, 0, 360, 40, GRAY);
-		//DrawCircleSector(center, 60, motor_state[THETA], motor_state[THETA] + 10, 40, BLUE);
+		// DrawCircleSector(center, 60, 0, 360, 40, GRAY);
+		// DrawCircleSector(center, 60, motor_state[THETA], motor_state[THETA] + 10, 40,
+		// BLUE);
 		if (IsGestureDetected(GESTURE_TAP) == TRUE) {
 			position_target = GetTouchPosition(0);
+		}
+		if (IsKeyDown(KEY_SPACE) == TRUE) {
+			if (!shoot_projectile) {
+				projectile_current = position_current;
+				projectile_end = GetMousePosition();
+				shoot_projectile = true;
+			}
 		}
 		DrawCar(&carTexture, position_current.x, position_current.y);
 
 		EndDrawing();
 		//----------------------------------------------------------------------------------
 	}
-  UnloadTexture(carTexture);
+	UnloadTexture(carTexture);
 	// De-Initialization
 	//--------------------------------------------------------------------------------------
 	CloseWindow(); // Close window and OpenGL context
