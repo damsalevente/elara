@@ -2,6 +2,7 @@
 
 #include <mach-o/dyld.h>
 #include <raylib.h>
+#include <zmq.h>
 #include <raymath.h>
 #include "controllers.h"
 #include "motor.h"
@@ -28,7 +29,7 @@ void DrawCar(Texture2D *texture, int x, int y)
 	Rectangle destRect = {x - (float)carWidth / 8, y - (float)carHeight / 8,
 			      (float)carWidth / 4, (float)carHeight / 4};
 	Vector2 origin = {0, 0};
-	// DrawTexturePro(*texture, sourceRect, destRect, origin, 0.0f, WHITE);
+	DrawTexturePro(*texture, sourceRect, destRect, origin, 0.0f, WHITE);
 
 	if (abs(x - prev_x) > 0.5 || abs(y - prev_y) > 0.5) {
 		if (run_anim_counter % 5 == 0) {
@@ -86,6 +87,7 @@ int main(void)
 	/* motor parameters */
 	float t = 0.0; /* time */
 	int counter = 0;
+  bool shoot_switcher = false;
 	int ctrl_run = 0;
 	float motor_state[N] = {0.0}; /* buffer for output */
 	float w_ref = 0.0;
@@ -94,6 +96,8 @@ int main(void)
 	float desired_position = 0.0f;
 	/* should be a button */
 	motor_turn_on(motor_state);
+  
+  void *context = zmq_ctx_new();
 
 	int posX = screenWidth / 2;
 	int posY = screenHeight / 2;
@@ -116,7 +120,7 @@ int main(void)
 	// screenHeight}); Clay_SetMeasureTextFunction(measureText);
 	set_motor(motor_type);
 
-	SetTargetFPS(50); // Set our game to run at 60 frames-per-second
+	SetTargetFPS(120); // Set our game to run at 60 frames-per-second
 	//--------------------------------------------------------------------------------------
 
 	// Main game loop
@@ -149,7 +153,7 @@ int main(void)
 		if (shoot_projectile) {
 
 			projectile_current =
-				Vector2MoveTowards(projectile_current, projectile_end, 10);
+				Vector2MoveTowards(projectile_current, projectile_end, 4);
       GuiLabel((Rectangle){projectile_current.x-10, projectile_current.y, 200,10}, "rontas");
       if((projectile_current.x == projectile_end.x) && (projectile_current.y == projectile_end.y))
       {
@@ -160,45 +164,49 @@ int main(void)
 		BeginDrawing();
 		ClearBackground(GetColor(GuiGetStyle(DEFAULT, BACKGROUND_COLOR)));
 
-		GuiTextBox((Rectangle){400, 400, 200, 20}, TextFormat("Distance: %lf", distance),
+		GuiTextBox((Rectangle){0, 400, 200, 20}, TextFormat("Distance: %lf", distance),
 			   12, 0);
-		GuiSlider((Rectangle){600, 40, 120, 20}, "Reference position",
+		GuiSlider((Rectangle){0, 40, 120, 20}, "Reference position",
 			  TextFormat("%lf", desired_position), &desired_position, 0.0f,
 			  screenWidth);
-		GuiSlider((Rectangle){100, 200, 120, 20}, "PID P",
+		GuiSlider((Rectangle){0, 200, 120, 20}, "PID P",
 			  TextFormat("%lf", controller_w.K), &controller_w.K, 0.0f, 20.0f);
-		GuiSlider((Rectangle){100, 220, 120, 20}, "PID I",
+		GuiSlider((Rectangle){0, 220, 120, 20}, "PID I",
 			  TextFormat("%lf", controller_w.I), &controller_w.I, 0.0f, 20.0f);
-		GuiSlider((Rectangle){100, 240, 120, 20}, "PID D",
+		GuiSlider((Rectangle){0, 240, 120, 20}, "PID D",
 			  TextFormat("%lf", controller_w.D), &controller_w.D, 0.0f, 20.0f);
-		GuiSlider((Rectangle){100, 260, 120, 20}, "PID P",
+		GuiSlider((Rectangle){0, 260, 120, 20}, "PID P",
 			  TextFormat("%lf", controller_id.K), &controller_id.K, 0.0f, 20.0f);
-		GuiSlider((Rectangle){100, 280, 120, 20}, "PID I",
+		GuiSlider((Rectangle){0, 280, 120, 20}, "PID I",
 			  TextFormat("%lf", controller_id.I), &controller_id.I, 0.0f, 20.0f);
-		GuiSlider((Rectangle){100, 300, 120, 20}, "PID D",
+		GuiSlider((Rectangle){0, 300, 120, 20}, "PID D",
 			  TextFormat("%lf", controller_id.D), &controller_id.D, 0.0f, 20.0f);
-		GuiSlider((Rectangle){100, 320, 120, 20}, "PID P",
+		GuiSlider((Rectangle){0, 320, 120, 20}, "PID P",
 			  TextFormat("%lf", controller_iq.K), &controller_iq.D, 0.0f, 20.0f);
-		GuiSlider((Rectangle){100, 340, 120, 20}, "PID I",
+		GuiSlider((Rectangle){0, 340, 120, 20}, "PID I",
 			  TextFormat("%lf", controller_iq.I), &controller_iq.D, 0.0f, 20.0f);
-		GuiSlider((Rectangle){100, 360, 120, 20}, "PID D",
+		GuiSlider((Rectangle){0, 360, 120, 20}, "PID D",
 			  TextFormat("%lf", controller_iq.D), &controller_iq.D, 0.0f, 20.0f);
 
 		if (MotorSelect(&motor_type)) {
 			set_motor(motor_type);
 			motor_turn_on(motor_state);
 		}
-		DrawText(TextFormat("Speed:\t\t %.2lf", motor_state[WR]), 600, 250, 16, GRAY);
-		DrawText(TextFormat("D Current: %.2lf", motor_state[ID]), 600, 300, 16, GRAY);
-		DrawText(TextFormat("Q Current: %l.2f", motor_state[IQ]), 600, 350, 16, GRAY);
+		DrawText(TextFormat("Speed:\t\t %.2lf", motor_state[WR]), 340, 0, 16, GRAY);
+		DrawText(TextFormat("D Current: %.2lf", motor_state[ID]), 450, 0, 16, GRAY);
+		DrawText(TextFormat("Q Current: %l.2f", motor_state[IQ]), 600, 0, 16, GRAY);
 		// DrawCircleSector(center, 60, 0, 360, 40, GRAY);
 		// DrawCircleSector(center, 60, motor_state[THETA], motor_state[THETA] + 10, 40,
 		// BLUE);
-		if (IsGestureDetected(GESTURE_TAP) == TRUE) {
+		if (IsGestureDetected(GESTURE_TAP) == TRUE || TRUE == IsGestureDetected(GESTURE_DRAG)) {
 			position_target = GetTouchPosition(0);
 		}
+    if (IsKeyDown(KEY_B) == TRUE)
+    {
+      shoot_switcher = !shoot_switcher;
+    }
 		if (IsKeyDown(KEY_SPACE) == TRUE) {
-			if (!shoot_projectile) {
+			if (!shoot_switcher || !shoot_projectile) {
 				projectile_current = position_current;
 				projectile_end = GetMousePosition();
 				shoot_projectile = true;
