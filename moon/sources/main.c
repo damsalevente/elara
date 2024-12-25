@@ -1,21 +1,14 @@
 #include "main.h"
+#include "motor.h"
 
 #include <mach-o/dyld.h>
 #include <raylib.h>
 #include <zmq.h>
 #include <raymath.h>
-#include "controllers.h"
-#include "motor.h"
-#include "pid.h"
 #define RAYGUI_IMPLEMENTATION
 #define CLAY_IMPLEMENTATION
 #include "clay.h"
 #include "clay_renderer_raylib.c"
-
-#include "solver.h"
-
-#define GEARBOX ((float)20.0f)
-#define TS      1.0f /* motor simulation time */
 
 void DrawCar(Texture2D *texture, int x, int y)
 {
@@ -46,6 +39,27 @@ void DrawCar(Texture2D *texture, int x, int y)
 	prev_x = x;
 	prev_y = y;
 	run_anim_counter++;
+}
+
+static uint8_t slider_params[9] = {0};
+const char *paramtext[9] = {
+	"Speed P", "Speed I", "Speed D", "ID P", "ID I", "ID D", "IQ P", "IQ I", "IQ D",
+};
+
+/* build slider layout and return if update is needed */
+bool Sliders(uint8_t slider_params[], uint8_t size)
+{
+	bool update = false;
+	for (int i = 0; i < size; i++) {
+		uint8_t newVal = 0;
+		GuiSlider((Rectangle){0, 200 + 15 * i, 120, 20}, paramtext[i],
+			  TextFormat("%d", slider_params[i]), &newVal, 0.0, 20.0);
+		if (newVal != slider_params[i]) {
+			update = true;
+			slider_params[i] = newVal;
+		}
+	}
+	return update;
 }
 
 int MotorSelect(int *motor_type)
@@ -87,17 +101,15 @@ int main(void)
 	/* motor parameters */
 	float t = 0.0; /* time */
 	int counter = 0;
-  bool shoot_switcher = false;
+	bool shoot_switcher = false;
 	int ctrl_run = 0;
-	float motor_state[N] = {0.0}; /* buffer for output */
 	float w_ref = 0.0;
 	int motor_type = 0;
 	bool shoot_projectile = false; /* shoot projectile or now */
 	float desired_position = 0.0f;
 	/* should be a button */
-	motor_turn_on(motor_state);
-  
-  void *context = zmq_ctx_new();
+	void *context = zmq_ctx_new();
+	bool param_update_from_client = false;
 
 	int posX = screenWidth / 2;
 	int posY = screenHeight / 2;
@@ -113,13 +125,6 @@ int main(void)
 	/* Load textures */
 	Texture2D carTexture = LoadTexture("./docs/removed_glutter.jpeg");
 
-	/* setup clay */
-	// uint64_t totalMemorySize = Clay_MinMemorySize();
-	// Clay_Arena arena = Clay_CreateArenaWithCapacityAndMemory(totalMemorySize,
-	// malloc(totalMemorySize)); Clay_Initialize(arena,  (Clay_Dimensions){screenWidth,
-	// screenHeight}); Clay_SetMeasureTextFunction(measureText);
-	set_motor(motor_type);
-
 	SetTargetFPS(120); // Set our game to run at 60 frames-per-second
 	//--------------------------------------------------------------------------------------
 
@@ -127,90 +132,45 @@ int main(void)
 	while (!WindowShouldClose()) // Detect window close button or ESC key
 	{
 		/* plant motor stuff */
-		step(t, t + TS, motor_state);
-		t = t + TS;
-
-		/* controller stuff */
-		distance = Vector2Distance(position_current, position_target);
-		w_ref = pos_control(distance, 0); /* control distance  to be zero */
-		control_runner(&w_ref, &motor_state[WR], &motor_state[ID], &motor_state[IQ],
-			       &motor_state[VD], &motor_state[VQ]);
-
-		position_current =
-			Vector2MoveTowards(position_current, position_target, motor_state[WR]);
-
-		if (position_current.x > screenWidth) {
-			position_current.x = screenWidth;
-		} else if (position_current.x < 0) {
-			position_current.x = 0;
-		}
-		if (position_current.y > screenHeight) {
-			position_current.y = screenHeight;
-		} else if (position_current.y < 0) {
-			position_current.y = 0;
-		}
-
-		if (shoot_projectile) {
-
-			projectile_current =
-				Vector2MoveTowards(projectile_current, projectile_end, 4);
-      GuiLabel((Rectangle){projectile_current.x-10, projectile_current.y, 200,10}, "rontas");
-      if((projectile_current.x == projectile_end.x) && (projectile_current.y == projectile_end.y))
-      {
-        shoot_projectile = false;
-      }
-		}
-
 		BeginDrawing();
 		ClearBackground(GetColor(GuiGetStyle(DEFAULT, BACKGROUND_COLOR)));
 
-		GuiTextBox((Rectangle){0, 400, 200, 20}, TextFormat("Distance: %lf", distance),
-			   12, 0);
-		GuiSlider((Rectangle){0, 40, 120, 20}, "Reference position",
-			  TextFormat("%lf", desired_position), &desired_position, 0.0f,
-			  screenWidth);
-		GuiSlider((Rectangle){0, 200, 120, 20}, "PID P",
-			  TextFormat("%lf", controller_w.K), &controller_w.K, 0.0f, 20.0f);
-		GuiSlider((Rectangle){0, 220, 120, 20}, "PID I",
-			  TextFormat("%lf", controller_w.I), &controller_w.I, 0.0f, 20.0f);
-		GuiSlider((Rectangle){0, 240, 120, 20}, "PID D",
-			  TextFormat("%lf", controller_w.D), &controller_w.D, 0.0f, 20.0f);
-		GuiSlider((Rectangle){0, 260, 120, 20}, "PID P",
-			  TextFormat("%lf", controller_id.K), &controller_id.K, 0.0f, 20.0f);
-		GuiSlider((Rectangle){0, 280, 120, 20}, "PID I",
-			  TextFormat("%lf", controller_id.I), &controller_id.I, 0.0f, 20.0f);
-		GuiSlider((Rectangle){0, 300, 120, 20}, "PID D",
-			  TextFormat("%lf", controller_id.D), &controller_id.D, 0.0f, 20.0f);
-		GuiSlider((Rectangle){0, 320, 120, 20}, "PID P",
-			  TextFormat("%lf", controller_iq.K), &controller_iq.D, 0.0f, 20.0f);
-		GuiSlider((Rectangle){0, 340, 120, 20}, "PID I",
-			  TextFormat("%lf", controller_iq.I), &controller_iq.D, 0.0f, 20.0f);
-		GuiSlider((Rectangle){0, 360, 120, 20}, "PID D",
-			  TextFormat("%lf", controller_iq.D), &controller_iq.D, 0.0f, 20.0f);
+		GuiTextBox((Rectangle){0, 400, 200, 20}, TextFormat("Distance: %lf", distance), 12,
+			   0);
+
+		param_update_from_client = Sliders(slider_params, 9);
+
+		if (param_update_from_client) {
+			/* TODO send zmq message */
+			zmq_send(socket, slider_params, 9, 0);
+		}
 
 		if (MotorSelect(&motor_type)) {
-			set_motor(motor_type);
-			motor_turn_on(motor_state);
+			/* TODO: send request to server */
+			zmq_send(socket, motor_type, 1, 0);
 		}
-		DrawText(TextFormat("Speed:\t\t %.2lf", motor_state[WR]), 340, 0, 16, GRAY);
-		DrawText(TextFormat("D Current: %.2lf", motor_state[ID]), 450, 0, 16, GRAY);
-		DrawText(TextFormat("Q Current: %l.2f", motor_state[IQ]), 600, 0, 16, GRAY);
-		// DrawCircleSector(center, 60, 0, 360, 40, GRAY);
-		// DrawCircleSector(center, 60, motor_state[THETA], motor_state[THETA] + 10, 40,
-		// BLUE);
-		if (IsGestureDetected(GESTURE_TAP) == TRUE || TRUE == IsGestureDetected(GESTURE_DRAG)) {
+		if (IsGestureDetected(GESTURE_TAP) == TRUE ||
+		    TRUE == IsGestureDetected(GESTURE_DRAG)) {
+
 			position_target = GetTouchPosition(0);
+			uint8_t buffer[64];
+			memcpy(buffer, &position_target, sizeof(Vector2));
+			/* TODO send new target to server */
+			zmq_send(socket, buffer, 64, 0);
 		}
-    if (IsKeyDown(KEY_B) == TRUE)
-    {
-      shoot_switcher = !shoot_switcher;
-    }
+		if (IsKeyDown(KEY_B) == TRUE) {
+			/* TODO: send shoot switch command */
+			shoot_switcher = !shoot_switcher;
+			zmq_send(socket, &shoot_switcher, 1, 0);
+		}
 		if (IsKeyDown(KEY_SPACE) == TRUE) {
+			/* TODO shoot */
 			if (!shoot_switcher || !shoot_projectile) {
 				projectile_current = position_current;
 				projectile_end = GetMousePosition();
 				shoot_projectile = true;
 			}
+			zmq_send(socket, &shoot_projectile, 1, 0);
 		}
 		DrawCar(&carTexture, position_current.x, position_current.y);
 
