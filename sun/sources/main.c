@@ -1,7 +1,9 @@
 #include "main.h"
 
+#include <_string.h>
 #include <mach-o/dyld.h>
 #include <raylib.h>
+#include <unistd.h>
 #include <zmq.h>
 #include <raymath.h>
 #include "controllers.h"
@@ -97,21 +99,16 @@ int main(void)
 	/* should be a button */
 	motor_turn_on(motor_state);
   
-  void *context = zmq_ctx_new();
-
 	int posX = screenWidth / 2;
 	int posY = screenHeight / 2;
 	float distance = 0;
 	Vector2 position_target = {posX, posY};
 	Vector2 projectile_current = {0};
 	Vector2 projectile_end = {0};
-	Vector2 position_current = {posX, posY};
+	volatile Vector2 position_current = {posX, posY};
 	int motor_selected = 0;
 	Vector2 center = {80, 80};
-	InitWindow(screenWidth, screenHeight, "raylib [core] example - basic window");
-	GuiLoadStyle("/Users/leventedamsa/Downloads/style_enefete.rgs");
 	/* Load textures */
-	Texture2D carTexture = LoadTexture("./docs/removed_glutter.jpeg");
 
 	/* setup clay */
 	// uint64_t totalMemorySize = Clay_MinMemorySize();
@@ -120,11 +117,18 @@ int main(void)
 	// screenHeight}); Clay_SetMeasureTextFunction(measureText);
 	set_motor(motor_type);
 
-	SetTargetFPS(120); // Set our game to run at 60 frames-per-second
-	//--------------------------------------------------------------------------------------
+  /* zmq init */
+  void *context = zmq_ctx_new();
+  void *publishser = zmq_socket(context,ZMQ_PUB);
+  void *subscribe = zmq_socket(context,ZMQ_SUB);
+  zmq_bind(publishser, "tcp://*:5564");
+  zmq_connect(subscribe, "tcp://localhost:5563");
+  zmq_setsockopt(subscribe, ZMQ_SUBSCRIBE, "T", 1);
 
+	//--------------------------------------------------------------------------------------
+  position_target = (Vector2){100.0, 200.0};
 	// Main game loop
-	while (!WindowShouldClose()) // Detect window close button or ESC key
+	while (1) // Detect window close button or ESC key
 	{
 		/* plant motor stuff */
 		step(t, t + TS, motor_state);
@@ -149,79 +153,23 @@ int main(void)
 		} else if (position_current.y < 0) {
 			position_current.y = 0;
 		}
-
-		if (shoot_projectile) {
-
-			projectile_current =
-				Vector2MoveTowards(projectile_current, projectile_end, 4);
-      GuiLabel((Rectangle){projectile_current.x-10, projectile_current.y, 200,10}, "rontas");
-      if((projectile_current.x == projectile_end.x) && (projectile_current.y == projectile_end.y))
-      {
-        shoot_projectile = false;
-      }
-		}
-
-		BeginDrawing();
-		ClearBackground(GetColor(GuiGetStyle(DEFAULT, BACKGROUND_COLOR)));
-
-		GuiTextBox((Rectangle){0, 400, 200, 20}, TextFormat("Distance: %lf", distance),
-			   12, 0);
-		GuiSlider((Rectangle){0, 40, 120, 20}, "Reference position",
-			  TextFormat("%lf", desired_position), &desired_position, 0.0f,
-			  screenWidth);
-		GuiSlider((Rectangle){0, 200, 120, 20}, "PID P",
-			  TextFormat("%lf", controller_w.K), &controller_w.K, 0.0f, 20.0f);
-		GuiSlider((Rectangle){0, 220, 120, 20}, "PID I",
-			  TextFormat("%lf", controller_w.I), &controller_w.I, 0.0f, 20.0f);
-		GuiSlider((Rectangle){0, 240, 120, 20}, "PID D",
-			  TextFormat("%lf", controller_w.D), &controller_w.D, 0.0f, 20.0f);
-		GuiSlider((Rectangle){0, 260, 120, 20}, "PID P",
-			  TextFormat("%lf", controller_id.K), &controller_id.K, 0.0f, 20.0f);
-		GuiSlider((Rectangle){0, 280, 120, 20}, "PID I",
-			  TextFormat("%lf", controller_id.I), &controller_id.I, 0.0f, 20.0f);
-		GuiSlider((Rectangle){0, 300, 120, 20}, "PID D",
-			  TextFormat("%lf", controller_id.D), &controller_id.D, 0.0f, 20.0f);
-		GuiSlider((Rectangle){0, 320, 120, 20}, "PID P",
-			  TextFormat("%lf", controller_iq.K), &controller_iq.D, 0.0f, 20.0f);
-		GuiSlider((Rectangle){0, 340, 120, 20}, "PID I",
-			  TextFormat("%lf", controller_iq.I), &controller_iq.D, 0.0f, 20.0f);
-		GuiSlider((Rectangle){0, 360, 120, 20}, "PID D",
-			  TextFormat("%lf", controller_iq.D), &controller_iq.D, 0.0f, 20.0f);
-
-		if (MotorSelect(&motor_type)) {
-			set_motor(motor_type);
-			motor_turn_on(motor_state);
-		}
-		DrawText(TextFormat("Speed:\t\t %.2lf", motor_state[WR]), 340, 0, 16, GRAY);
-		DrawText(TextFormat("D Current: %.2lf", motor_state[ID]), 450, 0, 16, GRAY);
-		DrawText(TextFormat("Q Current: %l.2f", motor_state[IQ]), 600, 0, 16, GRAY);
-		// DrawCircleSector(center, 60, 0, 360, 40, GRAY);
-		// DrawCircleSector(center, 60, motor_state[THETA], motor_state[THETA] + 10, 40,
-		// BLUE);
-		if (IsGestureDetected(GESTURE_TAP) == TRUE || TRUE == IsGestureDetected(GESTURE_DRAG)) {
-			position_target = GetTouchPosition(0);
-		}
-    if (IsKeyDown(KEY_B) == TRUE)
-    {
-      shoot_switcher = !shoot_switcher;
-    }
-		if (IsKeyDown(KEY_SPACE) == TRUE) {
-			if (!shoot_switcher || !shoot_projectile) {
-				projectile_current = position_current;
-				projectile_end = GetMousePosition();
-				shoot_projectile = true;
-			}
-		}
-		DrawCar(&carTexture, position_current.x, position_current.y);
-
-		EndDrawing();
-		//----------------------------------------------------------------------------------
+    /* send topic */
+    zmq_send(publishser, "P", 1, ZMQ_SNDMORE);
+    /* send data */
+    
+    uint8_t buffer[sizeof(Vector2)];
+    memcpy(buffer, &position_current, sizeof(Vector2));
+    /* TODO: in one thread */
+    zmq_send(publishser, buffer, sizeof(Vector2), 0);
+    char address[2];
+    zmq_recv(subscribe, address, 1, 0);
+    printf("Received address: [%s]\n", address);
+    uint8_t data [sizeof(Vector2)];
+    zmq_recv(subscribe, data, sizeof(Vector2), 0);
+    memcpy(&position_target,data, sizeof(Vector2));
+    printf("Received position: [%lf, %lf]\n", position_target.x, position_target.y);
+    printf("Current position: [%lf, %lf]\n", position_current.x, position_current.y);
 	}
-	UnloadTexture(carTexture);
-	// De-Initialization
-	//--------------------------------------------------------------------------------------
-	CloseWindow(); // Close window and OpenGL context
-	//--------------------------------------------------------------------------------------
 
 	return 0;
 }

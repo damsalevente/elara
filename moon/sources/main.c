@@ -108,7 +108,6 @@ int main(void)
 	bool shoot_projectile = false; /* shoot projectile or now */
 	float desired_position = 0.0f;
 	/* should be a button */
-	void *context = zmq_ctx_new();
 	bool param_update_from_client = false;
 
 	int posX = screenWidth / 2;
@@ -127,7 +126,14 @@ int main(void)
 
 	SetTargetFPS(120); // Set our game to run at 60 frames-per-second
 	//--------------------------------------------------------------------------------------
-
+  /* zmq init */
+  void *context = zmq_ctx_new();
+  void *publishser = zmq_socket(context,ZMQ_PUB);
+  void *subscribe = zmq_socket(context,ZMQ_SUB);
+  
+  zmq_bind(publishser, "tcp://*:5563");
+  zmq_connect(subscribe, "tcp://localhost:5564");
+  zmq_setsockopt(subscribe, ZMQ_SUBSCRIBE, "P", 1);
 	// Main game loop
 	while (!WindowShouldClose()) // Detect window close button or ESC key
 	{
@@ -138,30 +144,40 @@ int main(void)
 		GuiTextBox((Rectangle){0, 400, 200, 20}, TextFormat("Distance: %lf", distance), 12,
 			   0);
 
-		param_update_from_client = Sliders(slider_params, 9);
+		//param_update_from_client = Sliders(slider_params, 9);
 
 		if (param_update_from_client) {
 			/* TODO send zmq message */
-			zmq_send(socket, slider_params, 9, 0);
+			//zmq_send(socket, slider_params, 9, 0);
 		}
+    /* get current position from server */
+    char buffer[sizeof(Vector2)];
+    uint8_t address[2];
+    zmq_recv(subscribe, address, 1, ZMQ_NOBLOCK);
+    zmq_recv(subscribe, buffer, sizeof(Vector2), ZMQ_NOBLOCK);
+    memcpy(&position_current, buffer, sizeof(Vector2));
+
+    printf("Received position: [%lf, %lf]\n", position_current.x, position_current.y);
+    printf("Target position: [%lf, %lf]\n", position_target.x, position_target.y);
+    char outbuf[sizeof(Vector2)];
+    memcpy(outbuf, &position_target, sizeof(Vector2));
+    zmq_send(publishser,"T",1,ZMQ_SNDMORE);
+    zmq_send(publishser,outbuf,sizeof(Vector2), 0);
+    
 
 		if (MotorSelect(&motor_type)) {
 			/* TODO: send request to server */
-			zmq_send(socket, motor_type, 1, 0);
+			//zmq_send(socket, motor_type, 1, 0);
 		}
 		if (IsGestureDetected(GESTURE_TAP) == TRUE ||
 		    TRUE == IsGestureDetected(GESTURE_DRAG)) {
-
 			position_target = GetTouchPosition(0);
-			uint8_t buffer[64];
-			memcpy(buffer, &position_target, sizeof(Vector2));
-			/* TODO send new target to server */
-			zmq_send(socket, buffer, 64, 0);
+			//zmq_send(socket, buffer, 64, 0);
 		}
 		if (IsKeyDown(KEY_B) == TRUE) {
 			/* TODO: send shoot switch command */
 			shoot_switcher = !shoot_switcher;
-			zmq_send(socket, &shoot_switcher, 1, 0);
+//			zmq_send(socket, &shoot_switcher, 1, 0);
 		}
 		if (IsKeyDown(KEY_SPACE) == TRUE) {
 			/* TODO shoot */
@@ -170,7 +186,7 @@ int main(void)
 				projectile_end = GetMousePosition();
 				shoot_projectile = true;
 			}
-			zmq_send(socket, &shoot_projectile, 1, 0);
+			//zmq_send(socket, &shoot_projectile, 1, 0);
 		}
 		DrawCar(&carTexture, position_current.x, position_current.y);
 
