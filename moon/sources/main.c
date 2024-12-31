@@ -1,7 +1,8 @@
 #include "main.h"
 #include "motor.h"
-
 #include <mach-o/dyld.h>
+#include <pthread.h>
+#include <unistd.h>
 #include <raylib.h>
 #include <zmq.h>
 #include <raymath.h>
@@ -9,6 +10,89 @@
 #define CLAY_IMPLEMENTATION
 #include "clay.h"
 #include "clay_renderer_raylib.c"
+
+static pthread_mutex_t position_target_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t position_current_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static bool running = true;
+
+Vector2 position_target = {200, 400};
+Vector2 position_current = {200, 400};
+
+void set_position_target(Vector2 pos)
+{
+	pthread_mutex_lock(&position_target_mutex);
+	position_target.x = pos.x;
+	position_target.y = pos.y;
+	pthread_mutex_unlock(&position_target_mutex);
+}
+
+Vector2 get_position_target()
+{
+	Vector2 pos;
+	pthread_mutex_lock(&position_target_mutex);
+	pos.x = position_target.x;
+	pos.y = position_target.y;
+	pthread_mutex_unlock(&position_target_mutex);
+	return pos;
+}
+
+void set_position_current(Vector2 pos)
+{
+
+	pthread_mutex_lock(&position_current_mutex);
+	position_current.x = pos.x;
+	position_current.y = pos.y;
+	pthread_mutex_unlock(&position_current_mutex);
+}
+
+Vector2 get_position_current()
+{
+	Vector2 pos;
+	pthread_mutex_lock(&position_current_mutex);
+	pos.x = position_current.x;
+	pos.y = position_current.y;
+	pthread_mutex_unlock(&position_current_mutex);
+	return pos;
+}
+
+static void *subscriber_thread(void *ctx)
+{
+
+	void *subscribe = zmq_socket(ctx, ZMQ_SUB);
+	zmq_connect(subscribe, "tcp://localhost:5564");
+	zmq_setsockopt(subscribe, ZMQ_SUBSCRIBE, "P", 1);
+
+	uint8_t address[2] = {0};
+	while (running) {
+		Vector2 position_from_server = {0};
+		char buffer[sizeof(Vector2)] = {0};
+		zmq_recv(subscribe, address, 1, ZMQ_NOBLOCK);
+		if (-1 != zmq_recv(subscribe, buffer, sizeof(Vector2), ZMQ_NOBLOCK)) {
+			memcpy(&position_from_server, buffer, sizeof(Vector2));
+			set_position_current(position_from_server);
+		}
+		usleep(10 * 1000);
+	}
+	zmq_close(subscribe);
+	return NULL;
+}
+
+static void *publisher_thread(void *ctx)
+{
+	void *pub = zmq_socket(ctx, ZMQ_PUB);
+	zmq_bind(pub, "tcp://*:5563");
+	while (running) {
+		char outbuf[sizeof(Vector2)] = {0};
+		Vector2 target_pos = get_position_target();
+		memcpy(outbuf, &target_pos, sizeof(Vector2));
+		zmq_send(pub, "T", 1, ZMQ_SNDMORE);
+		zmq_send(pub, outbuf, sizeof(Vector2), 0);
+		usleep(10 * 1000);
+	}
+	zmq_close(pub);
+	return NULL;
+}
 
 void DrawCar(Texture2D *texture, int x, int y)
 {
@@ -113,10 +197,8 @@ int main(void)
 	int posX = screenWidth / 2;
 	int posY = screenHeight / 2;
 	float distance = 0;
-	Vector2 position_target = {posX, posY};
 	Vector2 projectile_current = {0};
 	Vector2 projectile_end = {0};
-	Vector2 position_current = {posX, posY};
 	int motor_selected = 0;
 	Vector2 center = {80, 80};
 	InitWindow(screenWidth, screenHeight, "raylib [core] example - basic window");
@@ -126,14 +208,13 @@ int main(void)
 
 	SetTargetFPS(120); // Set our game to run at 60 frames-per-second
 	//--------------------------------------------------------------------------------------
-  /* zmq init */
-  void *context = zmq_ctx_new();
-  void *publishser = zmq_socket(context,ZMQ_PUB);
-  void *subscribe = zmq_socket(context,ZMQ_SUB);
-  
-  zmq_bind(publishser, "tcp://*:5563");
-  zmq_connect(subscribe, "tcp://localhost:5564");
-  zmq_setsockopt(subscribe, ZMQ_SUBSCRIBE, "P", 1);
+	/* zmq init */
+	void *context = zmq_ctx_new();
+	pthread_t pub;
+	pthread_t sub;
+	pthread_create(&pub, NULL, publisher_thread, context);
+	pthread_create(&sub, NULL, subscriber_thread, context);
+
 	// Main game loop
 	while (!WindowShouldClose()) // Detect window close button or ESC key
 	{
@@ -144,51 +225,39 @@ int main(void)
 		GuiTextBox((Rectangle){0, 400, 200, 20}, TextFormat("Distance: %lf", distance), 12,
 			   0);
 
-		//param_update_from_client = Sliders(slider_params, 9);
+		// param_update_from_client = Sliders(slider_params, 9);
 
 		if (param_update_from_client) {
 			/* TODO send zmq message */
-			//zmq_send(socket, slider_params, 9, 0);
+			// zmq_send(socket, slider_params, 9, 0);
 		}
-    /* get current position from server */
-    char buffer[sizeof(Vector2)];
-    uint8_t address[2];
-    zmq_recv(subscribe, address, 1, ZMQ_NOBLOCK);
-    zmq_recv(subscribe, buffer, sizeof(Vector2), ZMQ_NOBLOCK);
-    memcpy(&position_current, buffer, sizeof(Vector2));
+		/* get current position from server */
 
-    printf("Received position: [%lf, %lf]\n", position_current.x, position_current.y);
-    printf("Target position: [%lf, %lf]\n", position_target.x, position_target.y);
-    char outbuf[sizeof(Vector2)];
-    memcpy(outbuf, &position_target, sizeof(Vector2));
-    zmq_send(publishser,"T",1,ZMQ_SNDMORE);
-    zmq_send(publishser,outbuf,sizeof(Vector2), 0);
-    
+		printf("Received position: [%lf, %lf]\n", get_position_current().x,
+		       position_current.y);
+		printf("Target position: [%lf, %lf]\n", get_position_target().x,
+		       get_position_target().y);
 
 		if (MotorSelect(&motor_type)) {
 			/* TODO: send request to server */
-			//zmq_send(socket, motor_type, 1, 0);
 		}
 		if (IsGestureDetected(GESTURE_TAP) == TRUE ||
 		    TRUE == IsGestureDetected(GESTURE_DRAG)) {
-			position_target = GetTouchPosition(0);
-			//zmq_send(socket, buffer, 64, 0);
+			set_position_target(GetTouchPosition(0));
 		}
 		if (IsKeyDown(KEY_B) == TRUE) {
 			/* TODO: send shoot switch command */
 			shoot_switcher = !shoot_switcher;
-//			zmq_send(socket, &shoot_switcher, 1, 0);
 		}
 		if (IsKeyDown(KEY_SPACE) == TRUE) {
 			/* TODO shoot */
 			if (!shoot_switcher || !shoot_projectile) {
-				projectile_current = position_current;
+				projectile_current = get_position_current();
 				projectile_end = GetMousePosition();
 				shoot_projectile = true;
 			}
-			//zmq_send(socket, &shoot_projectile, 1, 0);
 		}
-		DrawCar(&carTexture, position_current.x, position_current.y);
+		DrawCar(&carTexture, get_position_current().x, get_position_current().y);
 
 		EndDrawing();
 		//----------------------------------------------------------------------------------
@@ -197,6 +266,11 @@ int main(void)
 	// De-Initialization
 	//--------------------------------------------------------------------------------------
 	CloseWindow(); // Close window and OpenGL context
+	running = false;
+	pthread_join(pub, NULL);
+	pthread_join(sub, NULL);
+	zmq_ctx_destroy(context);
+	//
 	//--------------------------------------------------------------------------------------
 
 	return 0;

@@ -52,7 +52,7 @@ target_compile_definitions(${PROJECT_NAME}_server PUBLIC ASSETS_PATH="${CMAKE_CU
 add_executable(${PROJECT_NAME}_client)
 target_sources(${PROJECT_NAME}_client PRIVATE ${PROJECT_SOURCES_CLIENT})
 target_include_directories(${PROJECT_NAME}_client PRIVATE ${PROJECT_INCLUDE_CLIENT} ${zeromq_SOURCE_DIR}/include ${czmq_SOURCE_DIR}/include)
-target_link_libraries(${PROJECT_NAME}_client PRIVATE czmq libzmq  raylib "-framework Cocoa" "-framework IOKit" "-framework GLUT" "-framework OpenGL")
+target_link_libraries(${PROJECT_NAME}_client PRIVATE pthread czmq libzmq  raylib "-framework Cocoa" "-framework IOKit" "-framework GLUT" "-framework OpenGL")
 
 # Setting ASSETS_PATH
 target_compile_definitions(${PROJECT_NAME}_client PUBLIC ASSETS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/") # Set the asset path macro to the absolute path on the dev machine

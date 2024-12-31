@@ -1,5 +1,4 @@
 #include "main.h"
-
 #include <_string.h>
 #include <mach-o/dyld.h>
 #include <raylib.h>
@@ -8,16 +7,101 @@
 #include <raymath.h>
 #include "controllers.h"
 #include "motor.h"
-#include "pid.h"
 #define RAYGUI_IMPLEMENTATION
 #define CLAY_IMPLEMENTATION
 #include "clay.h"
 #include "clay_renderer_raylib.c"
+#include "unistd.h"
+#include <pthread.h>
 
 #include "solver.h"
 
 #define GEARBOX ((float)20.0f)
 #define TS      1.0f /* motor simulation time */
+
+static pthread_mutex_t position_target_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t position_current_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static bool running = true;
+
+Vector2 position_target = {0, 0};
+Vector2 position_current = {0, 0};
+
+void set_position_target(Vector2 pos)
+{
+	pthread_mutex_lock(&position_target_mutex);
+	position_target.x = pos.x;
+	position_target.y = pos.y;
+	pthread_mutex_unlock(&position_target_mutex);
+}
+
+Vector2 get_position_target()
+{
+	Vector2 pos = {0};
+	pthread_mutex_lock(&position_target_mutex);
+	pos.x = position_target.x;
+	pos.y = position_target.y;
+	pthread_mutex_unlock(&position_target_mutex);
+	return pos;
+}
+
+void set_position_current(Vector2 pos)
+{
+
+	pthread_mutex_lock(&position_current_mutex);
+	position_current.x = pos.x;
+	position_current.y = pos.y;
+	pthread_mutex_unlock(&position_current_mutex);
+}
+
+Vector2 get_position_current()
+{
+	Vector2 pos = {0};
+	pthread_mutex_lock(&position_current_mutex);
+	pos.x = position_current.x;
+	pos.y = position_current.y;
+	pthread_mutex_unlock(&position_current_mutex);
+	return pos;
+}
+
+static void *subscriber_thread(void *ctx)
+{
+
+	void *subscribe = zmq_socket(ctx, ZMQ_SUB);
+	zmq_connect(subscribe, "tcp://localhost:5563");
+	zmq_setsockopt(subscribe, ZMQ_SUBSCRIBE, "T", 1);
+
+	uint8_t address[2];
+	while (running) {
+		Vector2 position_from_server = {0};
+		char buffer[sizeof(Vector2)] = {0};
+		zmq_recv(subscribe, address, 1, ZMQ_NOBLOCK);
+		if (-1 != zmq_recv(subscribe, buffer, sizeof(Vector2), ZMQ_NOBLOCK)) {
+			memcpy(&position_from_server, buffer, sizeof(Vector2));
+			set_position_target(position_from_server);
+		}
+
+		usleep(10 * 1000);
+	}
+	zmq_close(subscribe);
+	return NULL;
+}
+
+static void *publisher_thread(void *ctx)
+{
+	void *pub = zmq_socket(ctx, ZMQ_PUB);
+	zmq_bind(pub, "tcp://*:5564");
+	while (running) {
+		char outbuf[sizeof(Vector2)] = {0};
+		Vector2 target_pos = get_position_current();
+		memcpy(outbuf, &target_pos, sizeof(Vector2));
+		zmq_send(pub, "P", 1, ZMQ_SNDMORE);
+		zmq_send(pub, outbuf, sizeof(Vector2), 0);
+		usleep(10 * 1000);
+	}
+	zmq_close(pub);
+	return NULL;
+}
 
 void DrawCar(Texture2D *texture, int x, int y)
 {
@@ -80,6 +164,21 @@ static inline Clay_Dimensions measureText(Clay_String *cs, Clay_TextElementConfi
 	return dimensions;
 }
 
+void handle_wall(Vector2 _pos_curr, int screenWidth, int screenHeight)
+{
+	if (_pos_curr.x > screenWidth) {
+		_pos_curr.x = screenWidth;
+	} else if (_pos_curr.x < 0) {
+		_pos_curr.x = 0;
+	}
+	if (_pos_curr.y > screenHeight) {
+		_pos_curr.y = screenHeight;
+	} else if (_pos_curr.y < 0) {
+		_pos_curr.y = 0;
+	}
+	set_position_current(_pos_curr);
+}
+
 int main(void)
 {
 	// Initialization
@@ -89,7 +188,7 @@ int main(void)
 	/* motor parameters */
 	float t = 0.0; /* time */
 	int counter = 0;
-  bool shoot_switcher = false;
+	bool shoot_switcher = false;
 	int ctrl_run = 0;
 	float motor_state[N] = {0.0}; /* buffer for output */
 	float w_ref = 0.0;
@@ -98,14 +197,12 @@ int main(void)
 	float desired_position = 0.0f;
 	/* should be a button */
 	motor_turn_on(motor_state);
-  
+
 	int posX = screenWidth / 2;
 	int posY = screenHeight / 2;
 	float distance = 0;
-	Vector2 position_target = {posX, posY};
-	Vector2 projectile_current = {0};
 	Vector2 projectile_end = {0};
-	volatile Vector2 position_current = {posX, posY};
+	Vector2 position_current = {posX, posY};
 	int motor_selected = 0;
 	Vector2 center = {80, 80};
 	/* Load textures */
@@ -117,16 +214,15 @@ int main(void)
 	// screenHeight}); Clay_SetMeasureTextFunction(measureText);
 	set_motor(motor_type);
 
-  /* zmq init */
-  void *context = zmq_ctx_new();
-  void *publishser = zmq_socket(context,ZMQ_PUB);
-  void *subscribe = zmq_socket(context,ZMQ_SUB);
-  zmq_bind(publishser, "tcp://*:5564");
-  zmq_connect(subscribe, "tcp://localhost:5563");
-  zmq_setsockopt(subscribe, ZMQ_SUBSCRIBE, "T", 1);
+	/* zmq init */
+	void *context = zmq_ctx_new();
+	pthread_t pub;
+	pthread_t sub;
+	pthread_create(&pub, NULL, publisher_thread, context);
+	pthread_create(&sub, NULL, subscriber_thread, context);
 
 	//--------------------------------------------------------------------------------------
-  position_target = (Vector2){100.0, 200.0};
+	set_position_target((Vector2){100.0, 200.0});
 	// Main game loop
 	while (1) // Detect window close button or ESC key
 	{
@@ -135,40 +231,22 @@ int main(void)
 		t = t + TS;
 
 		/* controller stuff */
-		distance = Vector2Distance(position_current, position_target);
+		distance = Vector2Distance(get_position_current(), get_position_target());
 		w_ref = pos_control(distance, 0); /* control distance  to be zero */
 		control_runner(&w_ref, &motor_state[WR], &motor_state[ID], &motor_state[IQ],
 			       &motor_state[VD], &motor_state[VQ]);
 
-		position_current =
-			Vector2MoveTowards(position_current, position_target, motor_state[WR]);
+		Vector2 makeMove = Vector2MoveTowards(get_position_current(), get_position_target(),
+						      motor_state[WR]);
+		set_position_current(makeMove);
 
-		if (position_current.x > screenWidth) {
-			position_current.x = screenWidth;
-		} else if (position_current.x < 0) {
-			position_current.x = 0;
-		}
-		if (position_current.y > screenHeight) {
-			position_current.y = screenHeight;
-		} else if (position_current.y < 0) {
-			position_current.y = 0;
-		}
-    /* send topic */
-    zmq_send(publishser, "P", 1, ZMQ_SNDMORE);
-    /* send data */
-    
-    uint8_t buffer[sizeof(Vector2)];
-    memcpy(buffer, &position_current, sizeof(Vector2));
-    /* TODO: in one thread */
-    zmq_send(publishser, buffer, sizeof(Vector2), 0);
-    char address[2];
-    zmq_recv(subscribe, address, 1, 0);
-    printf("Received address: [%s]\n", address);
-    uint8_t data [sizeof(Vector2)];
-    zmq_recv(subscribe, data, sizeof(Vector2), 0);
-    memcpy(&position_target,data, sizeof(Vector2));
-    printf("Received position: [%lf, %lf]\n", position_target.x, position_target.y);
-    printf("Current position: [%lf, %lf]\n", position_current.x, position_current.y);
+		handle_wall(get_position_current(), screenWidth, screenHeight);
+		/* send topic */
+		printf("Received position: [%lf, %lf]\n", get_position_target().x,
+		       get_position_target().y);
+		printf("Current position: [%lf, %lf]\n", get_position_current().x,
+		       get_position_current().y);
+		usleep(10 * 1000);
 	}
 
 	return 0;
