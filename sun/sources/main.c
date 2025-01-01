@@ -17,17 +17,16 @@
 #include "solver.h"
 
 #define GEARBOX ((float)20.0f)
-#define TS      1.0f /* motor simulation time */
+#define TS      2.0f /* motor simulation time */
 
+static Vector2 position_target = {0, 0};
+static Vector2 position_current = {0, 0};
 static pthread_mutex_t position_target_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t position_current_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static bool running = true;
 
-Vector2 position_target = {0, 0};
-Vector2 position_current = {0, 0};
-
-void set_position_target(Vector2 pos)
+static void set_position_target(Vector2 pos)
 {
 	pthread_mutex_lock(&position_target_mutex);
 	position_target.x = pos.x;
@@ -35,7 +34,7 @@ void set_position_target(Vector2 pos)
 	pthread_mutex_unlock(&position_target_mutex);
 }
 
-Vector2 get_position_target()
+static Vector2 get_position_target()
 {
 	Vector2 pos = {0};
 	pthread_mutex_lock(&position_target_mutex);
@@ -45,7 +44,7 @@ Vector2 get_position_target()
 	return pos;
 }
 
-void set_position_current(Vector2 pos)
+static void set_position_current(Vector2 pos)
 {
 
 	pthread_mutex_lock(&position_current_mutex);
@@ -54,7 +53,7 @@ void set_position_current(Vector2 pos)
 	pthread_mutex_unlock(&position_current_mutex);
 }
 
-Vector2 get_position_current()
+static Vector2 get_position_current()
 {
 	Vector2 pos = {0};
 	pthread_mutex_lock(&position_current_mutex);
@@ -134,7 +133,7 @@ void DrawCar(Texture2D *texture, int x, int y)
 	run_anim_counter++;
 }
 
-int MotorSelect(int *motor_type)
+static int MotorSelect(int *motor_type)
 {
 	int motor_selected = 0;
 	motor_selected = GuiButton((Rectangle){600, 70, 120, 20}, "Motor 1");
@@ -164,7 +163,7 @@ static inline Clay_Dimensions measureText(Clay_String *cs, Clay_TextElementConfi
 	return dimensions;
 }
 
-void handle_wall(Vector2 _pos_curr, int screenWidth, int screenHeight)
+static Vector2 handle_wall(Vector2 _pos_curr, int screenWidth, int screenHeight)
 {
 	if (_pos_curr.x > screenWidth) {
 		_pos_curr.x = screenWidth;
@@ -176,7 +175,7 @@ void handle_wall(Vector2 _pos_curr, int screenWidth, int screenHeight)
 	} else if (_pos_curr.y < 0) {
 		_pos_curr.y = 0;
 	}
-	set_position_current(_pos_curr);
+	return _pos_curr;
 }
 
 int main(void)
@@ -195,11 +194,8 @@ int main(void)
 	int motor_type = 0;
 	bool shoot_projectile = false; /* shoot projectile or now */
 	float desired_position = 0.0f;
-	/* should be a button */
-	motor_turn_on(motor_state);
-
-	int posX = screenWidth / 2;
-	int posY = screenHeight / 2;
+	int posX = screenWidth * 0.5;
+	int posY = screenHeight * 0.5;
 	float distance = 0;
 	Vector2 projectile_end = {0};
 	Vector2 position_current = {posX, posY};
@@ -212,6 +208,8 @@ int main(void)
 	// Clay_Arena arena = Clay_CreateArenaWithCapacityAndMemory(totalMemorySize,
 	// malloc(totalMemorySize)); Clay_Initialize(arena,  (Clay_Dimensions){screenWidth,
 	// screenHeight}); Clay_SetMeasureTextFunction(measureText);
+ 
+	motor_turn_on(motor_state);
 	set_motor(motor_type);
 
 	/* zmq init */
@@ -221,31 +219,31 @@ int main(void)
 	pthread_create(&pub, NULL, publisher_thread, context);
 	pthread_create(&sub, NULL, subscriber_thread, context);
 
+	Vector2 local_pos_current = {0, 0};
+	Vector2 local_pos_target = {100.0, 200.0};
 	//--------------------------------------------------------------------------------------
-	set_position_target((Vector2){100.0, 200.0});
+
 	// Main game loop
 	while (1) // Detect window close button or ESC key
 	{
+		local_pos_current = get_position_current();
+		local_pos_target = get_position_target();
 		/* plant motor stuff */
 		step(t, t + TS, motor_state);
 		t = t + TS;
-
 		/* controller stuff */
-		distance = Vector2Distance(get_position_current(), get_position_target());
+		distance = Vector2Distance(local_pos_current, local_pos_target);
 		w_ref = pos_control(distance, 0); /* control distance  to be zero */
 		control_runner(&w_ref, &motor_state[WR], &motor_state[ID], &motor_state[IQ],
 			       &motor_state[VD], &motor_state[VQ]);
 
-		Vector2 makeMove = Vector2MoveTowards(get_position_current(), get_position_target(),
-						      motor_state[WR]);
-		set_position_current(makeMove);
-
-		handle_wall(get_position_current(), screenWidth, screenHeight);
+		local_pos_current =
+			Vector2MoveTowards(local_pos_current, local_pos_target, motor_state[WR]);
+		local_pos_current = handle_wall(local_pos_current, screenWidth, screenHeight);
+		set_position_current(local_pos_current);
 		/* send topic */
-		printf("Received position: [%lf, %lf]\n", get_position_target().x,
-		       get_position_target().y);
-		printf("Current position: [%lf, %lf]\n", get_position_current().x,
-		       get_position_current().y);
+		printf("Received position: [%lf, %lf]\n", local_pos_target.x, local_pos_target.y);
+		printf("Current position: [%lf, %lf]\n", local_pos_current.x, local_pos_current.y);
 		usleep(10 * 1000);
 	}
 

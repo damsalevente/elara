@@ -11,13 +11,11 @@
 #include "clay.h"
 #include "clay_renderer_raylib.c"
 
+static Vector2 position_target = {200, 400};
+static Vector2 position_current = {200, 400};
 static pthread_mutex_t position_target_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t position_current_mutex = PTHREAD_MUTEX_INITIALIZER;
-
 static bool running = true;
-
-Vector2 position_target = {200, 400};
-Vector2 position_current = {200, 400};
 
 void set_position_target(Vector2 pos)
 {
@@ -39,7 +37,6 @@ Vector2 get_position_target()
 
 void set_position_current(Vector2 pos)
 {
-
 	pthread_mutex_lock(&position_current_mutex);
 	position_current.x = pos.x;
 	position_current.y = pos.y;
@@ -214,6 +211,8 @@ int main(void)
 	pthread_t sub;
 	pthread_create(&pub, NULL, publisher_thread, context);
 	pthread_create(&sub, NULL, subscriber_thread, context);
+	Vector2 local_pos_current = {0, 0};
+	Vector2 local_pos_target = {0, 0};
 
 	// Main game loop
 	while (!WindowShouldClose()) // Detect window close button or ESC key
@@ -224,7 +223,8 @@ int main(void)
 
 		GuiTextBox((Rectangle){0, 400, 200, 20}, TextFormat("Distance: %lf", distance), 12,
 			   0);
-
+		local_pos_current = get_position_current();
+		local_pos_target = get_position_target();
 		// param_update_from_client = Sliders(slider_params, 9);
 
 		if (param_update_from_client) {
@@ -233,10 +233,8 @@ int main(void)
 		}
 		/* get current position from server */
 
-		printf("Received position: [%lf, %lf]\n", get_position_current().x,
-		       position_current.y);
-		printf("Target position: [%lf, %lf]\n", get_position_target().x,
-		       get_position_target().y);
+		printf("Received position: [%lf, %lf]\n", local_pos_current.x, position_current.y);
+		printf("Target position: [%lf, %lf]\n", local_pos_target.x, local_pos_target.y);
 
 		if (MotorSelect(&motor_type)) {
 			/* TODO: send request to server */
@@ -252,12 +250,12 @@ int main(void)
 		if (IsKeyDown(KEY_SPACE) == TRUE) {
 			/* TODO shoot */
 			if (!shoot_switcher || !shoot_projectile) {
-				projectile_current = get_position_current();
+				projectile_current = local_pos_current;
 				projectile_end = GetMousePosition();
 				shoot_projectile = true;
 			}
 		}
-		DrawCar(&carTexture, get_position_current().x, get_position_current().y);
+		DrawCar(&carTexture, local_pos_current.x, local_pos_current.y);
 
 		EndDrawing();
 		//----------------------------------------------------------------------------------
