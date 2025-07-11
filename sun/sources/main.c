@@ -13,17 +13,72 @@
 #include "clay_renderer_raylib.c"
 #include "unistd.h"
 #include <pthread.h>
-
 #include "solver.h"
+
+
+
+typedef struct Mqtt_Payload_r{
+  Vector2 player_position_current;
+  Vector2 player_projectile_current;
+  bool projectile_active;
+}Mqtt_Payload_r;
+
+
+
+typedef struct Mqtt_Payload_s{
+  Vector2 player_position_target;
+  Vector2 player_projectile;
+  bool projectile_active;
+}Mqtt_Payload_s;
+
+
 
 #define GEARBOX ((float)20.0f)
 #define TS      2.0f /* motor simulation time */
 
-static Vector2 position_target = {0, 0};
-static Vector2 position_current = {0, 0};
+
+static Vector2 position_target = {200, 400};
+static Vector2 position_current = {200, 400};
+static Vector2 projectile_current = {0};
+static Vector2 projectile_end = {0};
+
 static pthread_mutex_t position_target_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t position_current_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t projectile_target_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t projectile_current_mutex = PTHREAD_MUTEX_INITIALIZER;
+void set_projectile_curr(Vector2 pos)
+{
+    pthread_mutex_lock(&projectile_current_mutex);
+    projectile_current = pos;
+    pthread_mutex_unlock(&projectile_current_mutex);
+}
 
+void set_projectile_end(Vector2 pos)
+{
+    pthread_mutex_lock(&projectile_target_mutex);
+    projectile_end = pos;
+    pthread_mutex_unlock(&projectile_target_mutex);
+}
+
+Vector2 get_projectile_curr()
+{
+    Vector2 ret = {0};
+    pthread_mutex_lock(&projectile_current_mutex);
+    ret = projectile_current;
+    pthread_mutex_unlock(&projectile_current_mutex);
+    return ret;
+}
+
+Vector2 get_projectile_end()
+{
+    Vector2 ret = {0};
+    pthread_mutex_lock(&projectile_target_mutex);
+    ret =  projectile_end;
+    pthread_mutex_unlock(&projectile_target_mutex);
+    return ret;
+}
+
+bool projectile_active = false;
 static bool running = true;
 
 static void set_position_target(Vector2 pos)
@@ -65,7 +120,6 @@ static Vector2 get_position_current()
 
 static void *subscriber_thread(void *ctx)
 {
-
 	void *subscribe = zmq_socket(ctx, ZMQ_SUB);
 	zmq_connect(subscribe, "tcp://localhost:5563");
 	zmq_setsockopt(subscribe, ZMQ_SUBSCRIBE, "T", 1);
@@ -73,13 +127,16 @@ static void *subscriber_thread(void *ctx)
 	uint8_t address[2];
 	while (running) {
 		Vector2 position_from_server = {0};
-		char buffer[sizeof(Vector2)] = {0};
+    Mqtt_Payload_s buffer = {0};
 		zmq_recv(subscribe, address, 1, ZMQ_NOBLOCK);
-		if (-1 != zmq_recv(subscribe, buffer, sizeof(Vector2), ZMQ_NOBLOCK)) {
-			memcpy(&position_from_server, buffer, sizeof(Vector2));
-			set_position_target(position_from_server);
+		if (-1 != zmq_recv(subscribe, &buffer, sizeof(Mqtt_Payload_s), ZMQ_NOBLOCK)) {
+      printf("Current position: %lf %lf\n", buffer.player_position_target.x, buffer.player_position_target.y);
+      printf("Projectile : %lf %lf\n", buffer.player_projectile.x, buffer.player_projectile.y );
+      printf("Projectile active: %d\n", buffer.projectile_active);
+      set_projectile_end(buffer.player_projectile);
+      set_position_target(buffer.player_position_target);
+      projectile_active = buffer.projectile_active;
 		}
-
 		usleep(10 * 1000);
 	}
 	zmq_close(subscribe);
@@ -91,16 +148,20 @@ static void *publisher_thread(void *ctx)
 	void *pub = zmq_socket(ctx, ZMQ_PUB);
 	zmq_bind(pub, "tcp://*:5564");
 	while (running) {
-		char outbuf[sizeof(Vector2)] = {0};
-		Vector2 target_pos = get_position_current();
-		memcpy(outbuf, &target_pos, sizeof(Vector2));
+		Mqtt_Payload_r outbuf = {
+      .player_position_current = get_position_current(),
+      .player_projectile_current = get_projectile_curr(),
+      .projectile_active = false
+    };
 		zmq_send(pub, "P", 1, ZMQ_SNDMORE);
-		zmq_send(pub, outbuf, sizeof(Vector2), 0);
+		zmq_send(pub, &outbuf, sizeof(Mqtt_Payload_r), 0);
 		usleep(10 * 1000);
 	}
 	zmq_close(pub);
 	return NULL;
 }
+
+
 
 void DrawCar(Texture2D *texture, int x, int y)
 {
@@ -218,9 +279,12 @@ int main(void)
 	pthread_t sub;
 	pthread_create(&pub, NULL, publisher_thread, context);
 	pthread_create(&sub, NULL, subscriber_thread, context);
+  bool prev_projectile_active = false;
 
 	Vector2 local_pos_current = {0, 0};
 	Vector2 local_pos_target = {100.0, 200.0};
+	Vector2 local_projectile_current = {0, 0};
+	Vector2 local_projectile_target = {100.0, 200.0};
 	//--------------------------------------------------------------------------------------
 
 	// Main game loop
@@ -228,6 +292,20 @@ int main(void)
 	{
 		local_pos_current = get_position_current();
 		local_pos_target = get_position_target();
+
+    if(projectile_active)
+    {
+      if(!prev_projectile_active)
+      {
+        local_projectile_current = local_pos_current;
+      }
+      else
+      {
+        local_projectile_current = Vector2MoveTowards(get_projectile_curr(), get_projectile_end(), 30);
+      }
+      set_projectile_curr(local_projectile_current);
+    }
+    prev_projectile_active = projectile_active;
 		/* plant motor stuff */
 		step(t, t + TS, motor_state);
 		t = t + TS;
@@ -242,8 +320,8 @@ int main(void)
 		local_pos_current = handle_wall(local_pos_current, screenWidth, screenHeight);
 		set_position_current(local_pos_current);
 		/* send topic */
-		printf("Received position: [%lf, %lf]\n", local_pos_target.x, local_pos_target.y);
-		printf("Current position: [%lf, %lf]\n", local_pos_current.x, local_pos_current.y);
+		// printf("Received position: [%lf, %lf]\n", local_pos_target.x, local_pos_target.y);
+		// printf("Current position: [%lf, %lf]\n", local_pos_current.x, local_pos_current.y);
 		usleep(10 * 1000);
 	}
 

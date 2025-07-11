@@ -62,6 +62,8 @@ plugins and extensibility: no way I can do that, just fork it man
 
 clone repository then
 
+    brew install zeromq
+
     cmake .
 
     cmake --build .

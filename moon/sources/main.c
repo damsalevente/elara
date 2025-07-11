@@ -11,10 +11,30 @@
 #include "clay.h"
 #include "clay_renderer_raylib.c"
 
+typedef struct Mqtt_Payload_r{
+  Vector2 player_position_current;
+  Vector2 player_projectile_current;
+  bool projectile_active;
+}Mqtt_Payload_r;
+
+
+typedef struct Mqtt_Payload_s{
+  Vector2 player_position_target;
+  Vector2 player_projectile;
+  bool projectile_active;
+}Mqtt_Payload_s;
+
 static Vector2 position_target = {200, 400};
 static Vector2 position_current = {200, 400};
+static Vector2 projectile_current = {0};
+static Vector2 projectile_end = {0};
+bool shoot_projectile = false; /* shoot projectile or now */
+
 static pthread_mutex_t position_target_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t position_current_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t projectile_target_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t projectile_current_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 static bool running = true;
 
 void set_position_target(Vector2 pos)
@@ -23,6 +43,38 @@ void set_position_target(Vector2 pos)
 	position_target.x = pos.x;
 	position_target.y = pos.y;
 	pthread_mutex_unlock(&position_target_mutex);
+}
+
+void set_projectile_curr(Vector2 pos)
+{
+    pthread_mutex_lock(&projectile_current_mutex);
+    projectile_current = pos;
+    pthread_mutex_unlock(&projectile_current_mutex);
+}
+
+void set_projectile_end(Vector2 pos)
+{
+    pthread_mutex_lock(&projectile_target_mutex);
+    projectile_end = pos;
+    pthread_mutex_unlock(&projectile_target_mutex);
+}
+
+Vector2 get_projectile_curr()
+{
+    Vector2 ret = {0};
+    pthread_mutex_lock(&projectile_current_mutex);
+    ret = projectile_current;
+    pthread_mutex_unlock(&projectile_current_mutex);
+    return ret;
+}
+
+Vector2 get_projectile_end()
+{
+    Vector2 ret = {0};
+    pthread_mutex_lock(&projectile_target_mutex);
+    ret =  projectile_end;
+    pthread_mutex_unlock(&projectile_target_mutex);
+    return ret;
 }
 
 Vector2 get_position_target()
@@ -62,12 +114,13 @@ static void *subscriber_thread(void *ctx)
 
 	uint8_t address[2] = {0};
 	while (running) {
-		Vector2 position_from_server = {0};
-		char buffer[sizeof(Vector2)] = {0};
+		Mqtt_Payload_r buffer = {0};
 		zmq_recv(subscribe, address, 1, ZMQ_NOBLOCK);
-		if (-1 != zmq_recv(subscribe, buffer, sizeof(Vector2), ZMQ_NOBLOCK)) {
-			memcpy(&position_from_server, buffer, sizeof(Vector2));
-			set_position_current(position_from_server);
+		if (-1 != zmq_recv(subscribe, &buffer, sizeof(Mqtt_Payload_r), ZMQ_NOBLOCK)) {
+			set_position_current(buffer.player_position_current);
+			set_projectile_curr(buffer.player_projectile_current);
+      printf(" position current: %lf %lf \n ", buffer.player_position_current.x, buffer.player_position_current.y);
+      printf(" projectile current: %lf %lf \n ", buffer.player_projectile_current.x, buffer.player_projectile_current.y);
 		}
 		usleep(10 * 1000);
 	}
@@ -80,15 +133,24 @@ static void *publisher_thread(void *ctx)
 	void *pub = zmq_socket(ctx, ZMQ_PUB);
 	zmq_bind(pub, "tcp://*:5563");
 	while (running) {
-		char outbuf[sizeof(Vector2)] = {0};
-		Vector2 target_pos = get_position_target();
-		memcpy(outbuf, &target_pos, sizeof(Vector2));
-		zmq_send(pub, "T", 1, ZMQ_SNDMORE);
-		zmq_send(pub, outbuf, sizeof(Vector2), 0);
+    Mqtt_Payload_s outbuf = 
+      {
+        .player_position_target = get_position_target(),
+        .player_projectile = get_projectile_end(), 
+        .projectile_active = shoot_projectile 
+      };
+    zmq_send(pub, "T", 1, ZMQ_SNDMORE);
+		zmq_send(pub, &outbuf, sizeof(Mqtt_Payload_s), 0);
 		usleep(10 * 1000);
 	}
 	zmq_close(pub);
 	return NULL;
+}
+
+
+void DrawProjectile(int x, int y)
+{
+  DrawCircle(x, y, 5, RED);
 }
 
 void DrawCar(Texture2D *texture, int x, int y)
@@ -186,7 +248,6 @@ int main(void)
 	int ctrl_run = 0;
 	float w_ref = 0.0;
 	int motor_type = 0;
-	bool shoot_projectile = false; /* shoot projectile or now */
 	float desired_position = 0.0f;
 	/* should be a button */
 	bool param_update_from_client = false;
@@ -194,8 +255,6 @@ int main(void)
 	int posX = screenWidth / 2;
 	int posY = screenHeight / 2;
 	float distance = 0;
-	Vector2 projectile_current = {0};
-	Vector2 projectile_end = {0};
 	int motor_selected = 0;
 	Vector2 center = {80, 80};
 	InitWindow(screenWidth, screenHeight, "raylib [core] example - basic window");
@@ -233,8 +292,8 @@ int main(void)
 		}
 		/* get current position from server */
 
-		printf("Received position: [%lf, %lf]\n", local_pos_current.x, position_current.y);
-		printf("Target position: [%lf, %lf]\n", local_pos_target.x, local_pos_target.y);
+		// printf("Received position: [%lf, %lf]\n", local_pos_current.x, position_current.y);
+		// printf("Target position: [%lf, %lf]\n", local_pos_target.x, local_pos_target.y);
 
 		if (MotorSelect(&motor_type)) {
 			/* TODO: send request to server */
@@ -247,14 +306,22 @@ int main(void)
 			/* TODO: send shoot switch command */
 			shoot_switcher = !shoot_switcher;
 		}
-		if (IsKeyDown(KEY_SPACE) == TRUE) {
-			/* TODO shoot */
-			if (!shoot_switcher || !shoot_projectile) {
-				projectile_current = local_pos_current;
-				projectile_end = GetMousePosition();
-				shoot_projectile = true;
-			}
-		}
+    if (IsKeyDown(KEY_SPACE) == TRUE) {
+      /* TODO shoot */
+      if (!shoot_projectile) {
+        set_projectile_end(GetMousePosition());
+        shoot_projectile = true;
+      }
+    }
+    if(shoot_projectile)
+    {
+      DrawProjectile(get_projectile_curr().x, get_projectile_curr().y);
+      if(get_projectile_end().x == get_projectile_curr().x &&
+        get_projectile_end().y == get_projectile_curr().y  ) 
+      {
+        shoot_projectile = false;
+      }
+    }
 		DrawCar(&carTexture, local_pos_current.x, local_pos_current.y);
 
 		EndDrawing();
