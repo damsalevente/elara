@@ -1,6 +1,5 @@
 #include "main.h"
 #include <string.h>
-#include <mach-o/dyld.h>
 #include <raylib.h>
 #include <unistd.h>
 #include <zmq.h>

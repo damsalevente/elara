@@ -1,6 +1,5 @@
 #include "main.h"
 #include "motor.h"
-#include <mach-o/dyld.h>
 #include <pthread.h>
 #include <unistd.h>
 #include <raylib.h>
@@ -10,6 +9,9 @@
 #define CLAY_IMPLEMENTATION
 #include "clay.h"
 #include "clay_renderer_raylib.c"
+
+#define TRUE 1u
+#define FALSE 0u
 
 typedef struct Mqtt_Payload_r{
   Vector2 player_position_current;
